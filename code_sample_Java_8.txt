@@ -1,0 +1,50 @@
+protected void initExporters() {
+        final boolean hasPermission = Utils.hasPermission(PermissionConstants.PM_TASKS_PDF_EXCEL_EXPORT);
+        listingTable.setExcelListener(clickEvent -> {
+            if (hasPermission) {
+                String excelURL = CommandConstants.COMMON_URL + "/downloadTaskListExcel";
+                ListingFilterParameter filterParametrs = listingTable.getFilterParametrs();
+                if (getFiterParametrs() != null) {
+                    if (getFiterParametrs().getProjectId() != null) {
+                        filterParametrs.setProjectId(getFiterParametrs().getProjectId());
+                    }
+                    if (getFiterParametrs().getDepartmentId() != null) {
+                        filterParametrs.setDepartmentId((getFiterParametrs().getDepartmentId()));
+                    }
+
+                    filterParametrs.setRelationID(getFiterParametrs().getRelationID());
+                    filterParametrs.setRelationType(getFiterParametrs().getRelationType());
+                    filterParametrs.setCrmTaskList(getFiterParametrs().isCrmTaskList());
+                }
+                listingTable.callListExcel(excelURL, filterParametrs);
+            } else {
+                BillboardPanel.get().hide();
+                Info.show("", "You don't have enough permissions", Info.Type.WARNING);
+            }
+        });
+        listingTable.setPDFListener(clickEvent -> {
+            if (hasPermission) {
+                if (totalCount > 1000) {
+                    Window.alert(wfmStrings.CurrentlyLimitedContactExport());
+                }
+                String pdfURL = CommandConstants.PDF_URL + "/taskListPDFHandler";
+                ListingFilterParameter filterParametrs = listingTable.getFilterParametrs();
+                if (getFiterParametrs() != null) {
+                    if (getFiterParametrs().getProjectId() != null) {
+                        filterParametrs.setProjectId(getFiterParametrs().getProjectId());
+                    }
+                    if (getFiterParametrs().getDepartmentId() != null) {
+                        filterParametrs.setDepartmentId((getFiterParametrs().getDepartmentId()));
+                    }
+                    filterParametrs.setRelationID(getFiterParametrs().getRelationID());
+                    filterParametrs.setRelationType(getFiterParametrs().getRelationType());
+                    filterParametrs.setCrmTaskList(getFiterParametrs().isCrmTaskList());
+                }
+                listingTable.callListPDF(pdfURL, filterParametrs);
+            } else {
+                BillboardPanel.get().hide();
+                Info.show("", "You don't have enough permissions", Info.Type.WARNING);
+            }
+        });
+        listingTable.addSelectionRowHandler(selected -> selectedRows = selected);
+    }
