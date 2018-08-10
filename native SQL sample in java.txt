@@ -1,0 +1,64 @@
+ public List getResourceUtilReport(ListingFilterParameter fp) {
+        DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        EdsReference notStarted = referenceManager.findReference(EdsProject.PROJECT_STATUS, EdsProject.NOT_STARTED);
+        EdsReference ongoing = referenceManager.findReference(EdsProject.PROJECT_STATUS, EdsProject.ONGOING);
+
+        EdsUser user = genericSettingsManager.getUser();
+        String timeZoneCurrentUser = user.getUserTimezone().getID();
+        boolean isFingerprintEnabled = genericSettingsManager.isSettingsEnabled(GenericSettingsEnum.FINGERPRINT_DEVICE_ENABLED);
+
+        String inOutHours = ", max(fpd.actualtime) as inOut \n";
+        String joinTables = " ";
+
+        joinTables = "left join (select tt.employeeid, tt.startdate , \n" +
+                "(CASE WHEN SUM((EXTRACT(EPOCH FROM tt.endDate at time zone '" + timeZoneCurrentUser + "')-EXTRACT(EPOCH FROM tt.startDate at time zone '" + timeZoneCurrentUser + "'))/60)<0 THEN 0 \n" +
+                "ELSE SUM((EXTRACT(EPOCH FROM tt.endDate at time zone '" + timeZoneCurrentUser + "')-EXTRACT(EPOCH FROM tt.startDate at time zone '" + timeZoneCurrentUser + "'))/60) END) as actualTime \n";
+
+        if (!isFingerprintEnabled) {
+            joinTables = joinTables +
+                    " from " + getCompanyId() + ".timetrack tt " +
+                    "left outer join " + getCompanyId() + ".employee e on e.id=tt.employeeid \n" +
+                    "where tt.startDate is not null and tt.endDate is not null and tt.statusid=20 \n" +
+                    "group by tt.employeeid, tt.startdate) fpd on fpd.employeeid=e.id \n" +
+                    " and date(fpd.startdate)=date(dj.from_date) ";
+        } else {
+            joinTables = joinTables +
+                    " from " + getCompanyId() + ".fingerprint tt " +
+                    "left join " + getCompanyId() + ".userfingerprintdevice fd on fd.fingerprint_id=tt.fingerprintId  and tt.deviceuuid=fd.device_id \n" +
+                    "left outer join " + getCompanyId() + ".employee e on e.id=fd.userid \n" +
+                    "where tt.startDate is not null and tt.endDate is not null and tt.statusid=20 \n" +
+                    "group by tt.employeeid, tt.startdate) fpd on fpd.employeeid=e.id \n" +
+                    " and date(fpd.startdate)=date(dj.from_date) ";
+        }
+
+        String positionSql = getPositionSql(fp);
+        int activeEmployeeStsId = 0;
+        if (fp.isShowActive()) {
+            activeEmployeeStsId = getActiveEmployeeStatusId(activeEmployeeStsId);
+        }
+        String sv = ("SELECT dj.from_date,e.id as eid,(mu.firstName ||' '|| mu.lastName) as employeeName, \n" +
+                "atraw.dayoff, \n" +
+                "(CASE WHEN atraw.dayoff is true OR atraw.holiday is true THEN 0 ELSE (CASE WHEN atraw.leave > 0 THEN atraw.timeslot - atraw.leave ELSE atraw.timeslot END) END) as timeSlotT, \n" +
+                "atraw.holiday,atraw.leave,sr.reason  \n" +
+                inOutHours +
+                "FROM datejoin dj \n" +
+                "CROSS JOIN " + getCompanyId() + ".employee e \n" +
+                "LEFT OUTER JOIN " + getCompanyId() + ".myuser mu ON (mu.id=e.id) \n" +
+                (fp.getEmployeeId() != null ? ("AND e.id=" + fp.getEmployeeId() + " \n") : "") +
+                (fp.isShowActive() ? ("LEFT OUTER JOIN " + getCompanyId() + ".reference re ON (re.id=mu.accountstatusid)\n") : "") +
+                "LEFT OUTER JOIN " + getCompanyId() + ".attendancerawdata atraw ON (atraw.date=dj.from_date AND atraw.employeeid=e.id) \n" +
+                "LEFT OUTER JOIN " + getCompanyId() + ".sickrequestduration srd ON (dj.from_date = srd.date) \n" +
+                "LEFT OUTER JOIN " + getCompanyId() + ".sickrequest sr ON (sr.id = srd.sickrequestid and atraw.employeeid = sr.employeeid) \n" +
+                "LEFT OUTER JOIN " + getCompanyId() + ".timesheet tsh ON (tsh.employeeid=e.id AND dj.from_date=tsh.date) \n" +
+                "LEFT OUTER JOIN " + getCompanyId() + ".teamemployee te ON (e.employeeDepartmentId=te.teamId) \n" +
+                joinTables +
+                " WHERE (dj.from_date between '" + dateFormat.format(fp.getStartDate()) + "' AND '" + dateFormat.format(fp.getEndDate()) + "') \n" +
+                positionSql +
+                "AND mu.deleted is not true \n" +
+                (fp.isShowActive() ? ("AND mu.accountstatusid =" + activeEmployeeStsId + " \n") : "") +
+                getRolePermission() + " \n" +
+                (fp.getEmployeeId() != null ? ("AND e.id=" + fp.getEmployeeId() + " \n") : "") +
+                "GROUP BY dj.from_date,e.id,mu.firstName,mu.lastName,atraw.dayoff,atraw.timeSlot,atraw.timeSheet,atraw.holiday,atraw.leave,sr.reason \n" +
+                "ORDER BY employeeName,dj.from_date");
+        return findNative(sv);
+    }

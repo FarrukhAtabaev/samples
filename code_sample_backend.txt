@@ -1,0 +1,206 @@
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    public ResourceUtilItem getResourceUtilization(ListingFilterParameter fp) {
+        Date startDate = new Date(Integer.parseInt(fp.getStartDateNC().split("-")[0]) - 1900, Integer.parseInt(fp.getStartDateNC().split("-")[1]) - 1, Integer.parseInt(fp.getStartDateNC().split("-")[2]), 0, 0, 0);
+        Date endDate = new Date(Integer.parseInt(fp.getEndDateNC().split("-")[0]) - 1900, Integer.parseInt(fp.getEndDateNC().split("-")[1]) - 1, Integer.parseInt(fp.getEndDateNC().split("-")[2]),
+                Integer.parseInt(fp.getEndDateNC().split("-")[3]), Integer.parseInt(fp.getEndDateNC().split("-")[4]), Integer.parseInt(fp.getEndDateNC().split("-")[5]));
+
+        Long interval = (new Date()).getTime();
+        fp.setStartDate(startDate);
+        fp.setEndDate(endDate);
+        List<EdsEmployee> existingEmployees = null;
+
+        ListingFilterParameter lfp = new ListingFilterParameter();
+        // lfp.setViewAsId(fp.getViewAsId());
+        lfp.setClientId(fp.getClientId());
+        lfp.setProjectId(fp.getProjectId());
+        lfp.setDepartmentId(fp.getDepartmentId());
+        lfp.setPositionIDs(fp.getPositionIDs());
+        lfp.setNoPosition(fp.getNoPosition());
+        lfp.setShowActive(fp.isShowActive());
+
+        existingEmployees = employeeManager.list(lfp, true);
+        String employeeIds = new String();
+        HashMap<Integer, Map<Date, Object[]>> employeesMap = new HashMap<>();
+        for (EdsEmployee empl : existingEmployees) {
+            if (fp.getEmployeeId() == null || empl.getObjectID().equals(fp.getEmployeeId())) {
+                Object[] obj = new Object[11];
+                obj[0] = null;
+                obj[1] = empl.getObjectID();
+                obj[2] = empl.getFullName();
+                Map<Date, Object[]> objectsMap = new HashMap<>();
+                objectsMap.put(null, obj);
+                employeesMap.put(empl.getObjectID(), objectsMap);
+                if (employeeIds.isEmpty()){
+                    employeeIds = empl.getObjectID().toString();
+                } else {
+                    employeeIds += "," + empl.getObjectID().toString();
+                }
+            }
+        }
+
+        //if (fp.getProjectId() == null) {
+        List employees = employeeManager.getResourceUtilReport(fp);
+        List otherDetails = employeeManager.getOtherDetailsResourceUtilReport(fp);
+
+        Integer unauthorizedLeaveId = referenceManager.getByCode("LR_TYPE_UNAUTHORIZED_LEAVE") != null ? referenceManager.getByCode("LR_TYPE_UNAUTHORIZED_LEAVE").getObjectID() : 0;
+        for (Object object : employees) {
+            Object[] data = (Object[]) object;
+            Object[] objectList = new Object[11];
+            objectList[0] = data[0];
+            objectList[1] = data[1];
+            objectList[2] = data[2];
+            objectList[3] = data[3];
+            objectList[4] = data[4];
+            objectList[5] = data[5];
+            objectList[6] = data[6];
+            objectList[7] = data[7];
+            objectList[8] = data[8];
+
+            Integer empID = (Integer) (data[1] != null ? data[1] : 0);
+            if (employeesMap.containsKey(empID)) {
+                Date date = (Date) (data[0]);
+                if (date != null) {
+                    Map<Date, Object[]> objectsMap =  employeesMap.get(empID);
+                    if (objectsMap.containsKey(date)) {
+                        Object[] previousList = objectsMap.get(date);
+                        Integer previousReasonId = previousList[7] != null ? (Integer) previousList[7] : 0;
+                        Integer currentReason = objectList[7] != null ? (Integer) objectList[7] : 0;
+                        if (currentReason.equals(unauthorizedLeaveId) && previousReasonId.equals(unauthorizedLeaveId)) {
+                            objectList[7] = unauthorizedLeaveId;
+                        } else {
+                            objectList[7] = previousReasonId;
+                        }
+                    }
+                    objectsMap.put(date, objectList);
+                }
+            }
+        }
+
+        for (Object object : otherDetails) {
+            Object[] data = (Object[]) object;
+            Integer empID = (Integer) (data[1] != null ? data[1] : 0);
+            if (employeesMap.containsKey(empID)) {
+                Date date = (Date) (data[0]);
+                if (date != null) {
+                    Map<Date, Object[]> objectsMap =  employeesMap.get(empID);
+                    if (objectsMap.containsKey(date)) {
+                        Object[] currentObj = objectsMap.get(date);
+                        currentObj[9] = data[3];
+                        currentObj[10] = data[4];
+                    }
+                }
+            }
+        }
+
+        //}
+        System.out.println("Load employees: " + ((new Date()).getTime() - interval) + " ms ");
+
+        interval = (new Date()).getTime();
+        ArrayList<Calendar> companyHolidayDays = availabilityCircularResolver.getCompanyHolidayList();
+        System.out.println("Load Holidays: " + ((new Date()).getTime() - interval) + " ms ");
+
+        interval = (new Date()).getTime();
+        Map<Integer, Integer> companyTimeSlot = availabilityCircularResolver.getCompanyTimeSlot();
+        System.out.println("Load Company TimeSlot: " + ((new Date()).getTime() - interval) + " ms ");
+
+        ResourceUtilItem resourceUtilItem = new ResourceUtilItem();
+
+        resourceUtilItem.setEmployeeIds(employeeIds);
+        interval = (new Date()).getTime();
+        int[] monthlyHoliday = availabilityCircularResolver.getMonthlyHoliday(companyTimeSlot, startDate, fp.getSelectedMonth(), companyHolidayDays);
+        System.out.println("Month Holidays: " + ((new Date()).getTime() - interval) + " ms ");
+
+        Map<Integer, EmployeeResourceUtilItem> empResourceUtilMap = new LinkedHashMap<>();
+        EmployeeResourceUtilItem employeeResourceUtilItem = null;
+        Integer emp_ID = null;
+
+        interval = (new Date()).getTime();
+
+        for (Map.Entry<Integer, Map<Date, Object[]>> entry : employeesMap.entrySet()) {
+            Map<Date, Object[]> datas = entry.getValue();
+            for (Map.Entry<Date, Object[]> dataList : datas.entrySet()) {
+                Object[] data = dataList.getValue();
+
+                Date dailyDATE = (Date) (data[0]);
+                Integer empID = (Integer) (data[1] != null ? data[1] : 0);
+                String empName = (String) (data[2] != null ? data[2] : "");
+                Boolean dayOff = (Boolean) (data[3] != null ? data[3] : Boolean.FALSE);
+                Integer timeSlotHour = (Integer) (data[4] != null ? data[4] : 0);
+                Integer inOutHour = (Integer) (data[8] != null ? ((Double) data[8]).intValue() : 0);
+                Boolean isHolidayT = (Boolean) (data[5] != null ? data[5] : Boolean.FALSE);
+                Integer approvedLRTime = 0;
+                if (data[7] != null && data[7].equals(unauthorizedLeaveId)) {
+                    approvedLRTime = (Integer) (data[6] != null ? data[6] : 0);
+                    approvedLRTime = approvedLRTime > 0 ? -approvedLRTime : -1;
+                } else {
+                    approvedLRTime = (Integer) (data[6] != null ? data[6] : 0);
+                }
+                BigInteger proTasksDailyLoadCount = (BigInteger) (data[9] != null ? data[9] : BigInteger.valueOf(0));
+                BigInteger timeSheetHour = (BigInteger) (data[10] != null ? data[10] : BigInteger.valueOf(0));
+                if (empID != null && empID != 0) {
+
+                    if (emp_ID == null || !emp_ID.equals(empID)) {
+                        emp_ID = empID;
+                        employeeResourceUtilItem = new EmployeeResourceUtilItem(empID, empName, (fp.getSelectedMonth() + 1));
+                        empResourceUtilMap.put(empID, employeeResourceUtilItem);
+                    }
+
+                    Calendar calendar = Calendar.getInstance();
+
+                    if (empResourceUtilMap.containsKey(empID)) {
+                        if (dailyDATE != null) {
+                            calendar.setTime(dailyDATE);
+                            int dayOffMonth = calendar.get(Calendar.DAY_OF_MONTH);
+                            int current = calendar.get(Calendar.DAY_OF_WEEK) - 1;
+                            if (fp.getSelectedMonth() >= dayOffMonth) {
+
+                                if (timeSlotHour != null) {
+                                    employeeResourceUtilItem.getTotalTimeSlotHours()[dayOffMonth] = dayOff ? 0 : timeSlotHour;
+                                }
+                                if (inOutHour != null) {
+                                    employeeResourceUtilItem.getTotalInOutHours()[dayOffMonth] = dayOff ? 0 : inOutHour;
+                                }
+                                if (timeSheetHour != null) {
+                                    employeeResourceUtilItem.getTotalTimeSheetHours()[dayOffMonth] = timeSheetHour.intValue();
+                                }
+
+                                if (proTasksDailyLoadCount != null) {
+                                    employeeResourceUtilItem.getTotalHours()[dayOffMonth] = proTasksDailyLoadCount.intValue();
+                                }
+                                if (isHolidayT) {
+                                    employeeResourceUtilItem.getWithHoliday_INT()[dayOffMonth] = 1;
+                                }
+                                if (approvedLRTime != null) {
+                                    employeeResourceUtilItem.getWith_LR_INT()[dayOffMonth] = dayOff ? 0 : approvedLRTime;
+                                }
+
+                                if (dayOff != null) {
+                                    employeeResourceUtilItem.getDayOff()[dayOffMonth] = dayOff;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        EmployeeResourceUtilItem[] employeeResourceUtilItems = new EmployeeResourceUtilItem[empResourceUtilMap.size()];
+        int e = 0;
+        for (Integer id : empResourceUtilMap.keySet()) {
+            employeeResourceUtilItems[e] = empResourceUtilMap.get(id);
+            e++;
+        }
+        Arrays.sort(employeeResourceUtilItems, (o1, o2) -> o1.getEmployee_name().compareTo(o2.getEmployee_name()));
+        resourceUtilItem.setEmployeeResourceUtilItems(employeeResourceUtilItems);
+
+        if (fp.getDepartmentId() != null) {
+            EdsDepartment department = departmentManager.get(fp.getDepartmentId());
+            resourceUtilItem.setDepartment_id(department.getObjectID());
+            resourceUtilItem.setDepartment_name(department.getName());
+            resourceUtilItem.setDepartment_description(department.getDescription());
+        }
+        resourceUtilItem.setMonth_holiday_INT(monthlyHoliday);
+
+        System.out.println("Process Time: " + ((new Date()).getTime() - interval) + " ms ");
+        return resourceUtilItem;
+    }
